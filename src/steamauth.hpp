@@ -77,6 +77,10 @@ private:
 };
 
 inline CSteam3Server s_SteamServer;
+inline CSteam3Server& Steam3Server()
+{
+	return s_SteamServer;
+}
 
 inline void CSteam3Server::OnValidateAuthTicketResponse(ValidateAuthTicketResponse_t* pValidateAuthTicketResponse)
 {
@@ -234,7 +238,7 @@ inline void CSteam3Server::InitServer(uint16_t port, const char* version)
 		printf("SteamGameServer() == nullptr\n");
 	}
 
-	SteamGameServer()->SetProduct("csgo");
+	SteamGameServer()->SetProduct("valve");
 	SteamGameServer()->SetDedicatedServer(true);
 
 	m_bInitialized = true;

@@ -37,7 +37,7 @@ public:
 	//We have to wait for the GC's response of the server reservation id, so this has to be running synchronously
 	void		Init(bool async = false);
 	void		SendHello();
-	uint64_t	GetServerReservationId(uint64_t serverid, uint32_t serverip, uint16_t serverport, uint32_t version);
+	uint64_t	GetServerReservationId() { return m_ReservationCookie; }
 	bool		SendMessageToGC(uint32_t type, google::protobuf::Message& msg);
 
 private:
@@ -47,6 +47,7 @@ private:
 private:
 	ISteamGameCoordinator*	m_pGameCoordinator = nullptr;
 	bool					m_AsyncReceive = false;
+	uint64_t				m_ReservationCookie = 0;
 };
 
 inline constexpr auto PROTO_FLAG = (1 << 31);
@@ -112,7 +113,9 @@ inline void GCClient::SendHello()
 				{
 					CMsgClientWelcome welcome;
 					welcome.ParseFromArray(memBlock.get() + sizeof(GCMsgHdr_t), size - sizeof(GCMsgHdr_t));
-					printf("GC Connection established for server, reservation id 0x%llX\n", welcome.cstrike15_welcome().gscookieid());
+
+					m_ReservationCookie = welcome.cstrike15_welcome().gscookieid();
+					printf("GC Connection established for server, reservation id 0x%llX\n", m_ReservationCookie);
 					success = true;
 					break;
 				}
@@ -171,13 +174,15 @@ inline void GCClient::OnGCMessageAvailable(uint32_t msgSize)
 		return;
 
 	msgType &= 0xFFFF;
-
-	char temp[256];
-	snprintf(temp, 10240, "C:\\Users\\HASEE\\Desktop\\proto\\%d.bin", msgType);
-	std::ofstream file_out(temp, std::ofstream::out | std::ofstream::binary);
-	file_out.write(memBlock.get() + 8, msgSize - 8);
-	file_out.close();
 	printf("Received GC message type %d, size %d\n", msgType, msgSize);
+	if (msgType == k_EMsgGCServerWelcome)
+	{
+		CMsgClientWelcome welcome;
+		welcome.ParseFromArray(memBlock.get() + sizeof(GCMsgHdr_t), msgSize - sizeof(GCMsgHdr_t));
+
+		m_ReservationCookie = welcome.cstrike15_welcome().gscookieid();
+		printf("GC Connection established for server, reservation id 0x%llX\n", m_ReservationCookie);
+	}
 }
 
 #endif // !__TINY_CSGO_CLIENT_GCCLIENT_HPP__
