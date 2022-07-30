@@ -35,6 +35,31 @@ if(MSVC)
     link_directories(${HL2SDK-CSGO}/lib/win32/release/vs2017)
     add_compile_options(/MT)
     add_compile_options(/wd4819)
+
+elseif(("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU"))
+
+    add_definitions(
+        -D GNUC
+        -D POSIX
+        -D COMPILER_GCC
+        -D _GLIBCXX_USE_CXX11_ABI=0
+    )
+    
+    set(STATIC_LIB_LIST 
+        ${HL2SDK-CSGO}/lib/linux32/release/libprotobuf.a
+        ${HL2SDK-CSGO}/lib/linux/libsteam_api.so
+        libpthread.so
+    )
+        
+    add_compile_options(
+        -m32 
+        -Wno-volatile
+        -Wno-format-security
+        -Wno-register
+        -fcoroutines
+    )
+    
+    add_link_options(-m32)
 endif()
 
 add_executable(tiny-csgo-server ${SRC_LIST})

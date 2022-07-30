@@ -9,6 +9,7 @@
 #include <vector>
 #include <optional>
 #include <stdexcept>
+#include <functional>
 
 // Simple commandline argument parser for tiny csgo server, with strict option type check
 
