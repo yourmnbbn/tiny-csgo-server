@@ -249,6 +249,8 @@ inline void CSteam3Server::LogOn()
 	uint32_t retry = 0;
 	printf("Logon using gslt %s\n", m_sAccountToken.c_str());
 	printf("Waiting for logon result response, this may take a while...\n");
+	
+	SteamGameServer()->LogOn(m_sAccountToken.c_str());
 	while (!m_bLogOnResult)
 	{
 		if (retry++ > 60)
@@ -257,7 +259,6 @@ inline void CSteam3Server::LogOn()
 			break;
 		}
 
-		SteamGameServer()->LogOn(m_sAccountToken.c_str());
 		std::this_thread::sleep_for(1s);
 		SteamGameServer_RunCallbacks();
 	}
