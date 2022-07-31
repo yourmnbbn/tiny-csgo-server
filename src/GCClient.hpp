@@ -11,8 +11,6 @@
 #include <isteamgamecoordinator.h>
 #include "netmessage/gcsdk_gcmessages.pb.h"
 
-#include <fstream>
-
 using namespace std::chrono_literals;
 
 enum EGCMsgSupplement

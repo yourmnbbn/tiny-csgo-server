@@ -90,8 +90,11 @@ private:
 
 			printf("Receive messages from %s:%d, size %d\n", edp.address().to_string().c_str(), edp.port(), m_LastReceivedPacketLength);
 
-			if (SteamGameServer()->HandleIncomingPacket(m_Buf, m_LastReceivedPacketLength, edp.address().to_v4().to_uint(), edp.port()))
+			if (!(co_await ProcessConnectionlessPacket(socket, edp, m_ReadBuf)))
 			{
+				if (!SteamGameServer()->HandleIncomingPacket(m_Buf, m_LastReceivedPacketLength, edp.address().to_v4().to_uint(), edp.port()))
+					co_return;
+
 				while (true)
 				{
 					uint32 netadrAddress;
@@ -106,6 +109,124 @@ private:
 				}
 			}
 		}
+	}
+
+	asio::awaitable<bool> ProcessConnectionlessPacket(udp::socket& socket, udp::endpoint remote_endpoint, bf_read& msg)
+	{
+		if (msg.ReadLong() != CONNECTIONLESS_HEADER)
+			co_return false;
+
+		int c = msg.ReadByte();
+		switch (c)
+		{
+		case A2S_INFO:
+		{
+			if (CONFIG_HANDLE_QUERY_BY_STEAM)
+				co_return false;
+
+			char key[24];
+			msg.ReadString(key, sizeof(key));
+			if (strcmp(key, A2S_KEY_STRING))
+				co_return false;
+
+			m_WriteBuf.WriteLong(CONNECTIONLESS_HEADER);
+			m_WriteBuf.WriteByte(S2A_INFO_SRC);
+
+			m_WriteBuf.WriteByte(17); //protocol version
+			m_WriteBuf.WriteString(SERVER_NAME);
+			m_WriteBuf.WriteString(SERVER_MAP);
+			m_WriteBuf.WriteString(SERVER_GAME_FOLDER);
+			m_WriteBuf.WriteString(SERVER_DESCRIPTION);
+
+			m_WriteBuf.WriteShort(SERVER_APPID);
+			m_WriteBuf.WriteByte(SERVER_NUM_CLIENTS);
+			m_WriteBuf.WriteByte(SERVER_MAX_CLIENTS);
+			m_WriteBuf.WriteByte(SERVER_NUM_FAKE_CLIENTS);
+			m_WriteBuf.WriteByte(SERVER_TYPE);
+			m_WriteBuf.WriteByte(SERVER_OS);
+
+			m_WriteBuf.WriteByte(SERVER_PASSWD_NEEDED);
+			m_WriteBuf.WriteByte(SERVER_VAC_STATES);
+			m_WriteBuf.WriteString(m_ArgParser.GetOptionValueString("-version"));
+
+			//EDF
+			m_WriteBuf.WriteByte(S2A_EXTRA_DATA_HAS_GAME_PORT | S2A_EXTRA_DATA_HAS_STEAMID | S2A_EXTRA_DATA_GAMEID | S2A_EXTRA_DATA_HAS_GAMETAG_DATA);
+
+			m_WriteBuf.WriteShort(m_ArgParser.GetOptionValueInt16U("-port"));
+			m_WriteBuf.WriteLongLong(SteamGameServer()->GetSteamID().ConvertToUint64());
+			m_WriteBuf.WriteString(SERVER_TAG);
+			m_WriteBuf.WriteLongLong(SERVER_APPID);
+
+			co_await socket.async_send_to(asio::buffer(m_Buf, m_WriteBuf.GetNumBytesWritten()), remote_endpoint, asio::use_awaitable);
+			co_return true;
+		}
+		case A2S_PLAYER:
+		{
+			if (CONFIG_HANDLE_QUERY_BY_STEAM)
+				co_return false;
+
+			m_WriteBuf.WriteLong(CONNECTIONLESS_HEADER);
+			m_WriteBuf.WriteByte(S2A_PLAYER);
+			m_WriteBuf.WriteByte(1);
+			m_WriteBuf.WriteByte(0);
+			m_WriteBuf.WriteString("Max Players");
+			m_WriteBuf.WriteLong(SERVER_MAX_CLIENTS);
+			m_WriteBuf.WriteFloat(3600.0);
+			
+			co_await socket.async_send_to(asio::buffer(m_Buf, m_WriteBuf.GetNumBytesWritten()), remote_endpoint, asio::use_awaitable);
+			co_return true;
+		}
+		case A2S_GETCHALLENGE:
+		{
+			if (!Steam3Server().BHasLogonResult())
+				break;
+
+			m_WriteBuf.WriteLong(CONNECTIONLESS_HEADER);
+			m_WriteBuf.WriteByte(S2C_CHALLENGE);
+			m_WriteBuf.WriteLong(SERVER_CHALLENGE);
+			m_WriteBuf.WriteLong(PROTOCOL_STEAM);
+
+			m_WriteBuf.WriteShort(0); //  steam2 encryption key not there anymore
+			m_WriteBuf.WriteLongLong(SteamGameServer()->GetSteamID().ConvertToUint64());
+			m_WriteBuf.WriteByte(Steam3Server().BSecure());
+
+			char temp[128];
+			snprintf(temp, sizeof(temp), "connect0x%X", SERVER_CHALLENGE);
+			m_WriteBuf.WriteString(temp);
+
+			m_WriteBuf.WriteLong(13837);
+			m_WriteBuf.WriteString(SERVER_PASSWD_NEEDED ? "friends" : "public");
+			m_WriteBuf.WriteByte(SERVER_PASSWD_NEEDED);
+			m_WriteBuf.WriteLongLong((uint64)-1); //Lobby id
+			m_WriteBuf.WriteByte(SERVER_DCFRIENDSREQD);
+			m_WriteBuf.WriteByte(SERVER_VALVE_OFFICIAL);
+
+			co_await socket.async_send_to(asio::buffer(m_Buf, m_WriteBuf.GetNumBytesWritten()), remote_endpoint, asio::use_awaitable);
+			co_return true;
+		}
+		case C2S_CONNECT:
+		{
+			//We don't want clients to connect to our server, so reject every connection request
+			m_WriteBuf.WriteLong(CONNECTIONLESS_HEADER);
+			m_WriteBuf.WriteByte(S2C_CONNREJECT);
+
+			if (m_ArgParser.HasOption("-rdip"))
+			{
+				m_WriteBuf.WriteString("ConnectRedirectAddress:");
+				m_WriteBuf.SeekToBit(m_WriteBuf.GetNumBitsWritten() - 8); //Get rid of '\0'
+				m_WriteBuf.WriteString(m_ArgParser.GetOptionValueString("-rdip"));
+			}
+			else
+			{
+				m_WriteBuf.WriteString("This server will reject every connection request, don't attempt to connect.");
+			}
+
+			co_await socket.async_send_to(asio::buffer(m_Buf, m_WriteBuf.GetNumBytesWritten()), remote_endpoint, asio::use_awaitable);
+			co_return true;
+		}
+		default:
+			co_return false;
+		}// switch (c)
 	}
 
 private:
