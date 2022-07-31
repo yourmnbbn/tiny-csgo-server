@@ -23,4 +23,5 @@ Tiny csgo server for logging on to steam game servers and establish connection w
 ## Command option notes
 - `-port` Game server listening port.
 - `-version` Version of current csgo, you can find this value in `steam.inf` with key name **"PatchVersion"**.
-- `-gslt` Game server logon token.
+- `-gslt` Game server logon token. If you don't set this, game server will logon to anonymous account and will not be displayed in the internet server browser.
+- `-rdip` Redirect IP Address (e.g. 127.0.0.1:27015). If this is set, server will redirect all connection request to the target address. If this is not set, server will reject all connection request.

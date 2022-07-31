@@ -123,17 +123,19 @@ inline void CSteam3Server::OnLogonSuccess(SteamServersConnected_t* pLogonSuccess
 
 		if (m_SteamIDGS.BAnonGameServerAccount())
 		{
-			printf("Assigned anonymous gameserver Steam ID %llu.\n", m_SteamIDGS.ConvertToUint64());
+			printf("Assigned anonymous gameserver Steam ID %s.\n", m_SteamIDGS.Render());
 		}
 		else if (m_SteamIDGS.BPersistentGameServerAccount())
 		{
-			printf("Assigned persistent gameserver Steam ID %llu.\n", m_SteamIDGS.ConvertToUint64());
+			printf("Assigned persistent gameserver Steam ID %s.\n", m_SteamIDGS.Render());
 		}
 		else
 		{
-			printf("Assigned Steam ID %llu, which is of an unexpected type!\n", m_SteamIDGS.ConvertToUint64());
+			printf("Assigned Steam ID %s, which is of an unexpected type!\n", m_SteamIDGS.Render());
 			printf("Unexpected steam ID type!\n");
 		}
+
+		printf("Gameserver logged on to Steam, assigned identity steamid:%llu\n", m_SteamIDGS.ConvertToUint64());
 	}
 }
 
@@ -246,11 +248,47 @@ inline void CSteam3Server::InitServer(uint16_t port, const char* version)
 
 inline void CSteam3Server::LogOn()
 {
-	uint32_t retry = 0;
-	printf("Logon using gslt %s\n", m_sAccountToken.c_str());
+	switch (m_eServerMode)
+	{
+	case eServerModeNoAuthentication:
+		printf("Initializing Steam libraries for LAN server\n");
+		break;
+	case eServerModeAuthentication:
+		printf("Initializing Steam libraries for INSECURE Internet server.  Authentication and VAC not requested.\n");
+		break;
+	case eServerModeAuthenticationAndSecure:
+		printf("Initializing Steam libraries for secure Internet server\n");
+		break;
+	default:
+		printf("Bogus eServermode %d!\n", m_eServerMode);
+		printf("Bogus server mode?!");
+		break;
+	}
+
+	if (m_sAccountToken.empty())
+	{
+		printf("****************************************************\n");
+		printf("*                                                  *\n");
+		printf("*  No Steam account token was specified.           *\n");
+		printf("*  Logging into anonymous game server account.     *\n");
+		printf("*  Connections will be restricted to LAN only.     *\n");
+		printf("*                                                  *\n");
+		printf("*  To create a game server account go to           *\n");
+		printf("*  http://steamcommunity.com/dev/managegameservers *\n");
+		printf("*                                                  *\n");
+		printf("****************************************************\n");
+
+		SteamGameServer()->LogOnAnonymous();
+	}
+	else
+	{
+		printf("Logging into Steam gameserver account with logon token %s\n", m_sAccountToken.c_str());
+		SteamGameServer()->LogOn(m_sAccountToken.c_str());
+	}
+
 	printf("Waiting for logon result response, this may take a while...\n");
-	
-	SteamGameServer()->LogOn(m_sAccountToken.c_str());
+
+	uint32_t retry = 0;
 	while (!m_bLogOnResult)
 	{
 		if (retry++ > 60)
@@ -263,5 +301,88 @@ inline void CSteam3Server::LogOn()
 		SteamGameServer_RunCallbacks();
 	}
 }
+
+//-----------------------------------------------------------------------------
+// Purpose: Renders the steam ID to a buffer.  NOTE: for convenience of calling
+//			code, this code returns a pointer to a static buffer and is NOT thread-safe.
+// Output:  buffer with rendered Steam ID
+//-----------------------------------------------------------------------------
+inline const char* CSteamID::Render() const
+{
+	// longest length of returned string is k_cBufLen
+	//	[A:%u:%u:%u]
+	//	 %u == 10 * 3 + 6 == 36, plus terminator == 37
+	const int k_cBufLen = 37;
+
+	const int k_cBufs = 4;	// # of static bufs to use (so people can compose output with multiple calls to Render() )
+	static char rgchBuf[k_cBufs][k_cBufLen];
+	static int nBuf = 0;
+	char* pchBuf = rgchBuf[nBuf];	// get pointer to current static buf
+	nBuf++;	// use next buffer for next call to this method
+	nBuf %= k_cBufs;
+
+	if (k_EAccountTypeAnonGameServer == m_steamid.m_comp.m_EAccountType)
+	{
+		snprintf(pchBuf, k_cBufLen, "[A:%u:%u:%u]", m_steamid.m_comp.m_EUniverse, m_steamid.m_comp.m_unAccountID, m_steamid.m_comp.m_unAccountInstance);
+	}
+	else if (k_EAccountTypeGameServer == m_steamid.m_comp.m_EAccountType)
+	{
+		snprintf(pchBuf, k_cBufLen, "[G:%u:%u]", m_steamid.m_comp.m_EUniverse, m_steamid.m_comp.m_unAccountID);
+	}
+	else if (k_EAccountTypeMultiseat == m_steamid.m_comp.m_EAccountType)
+	{
+		snprintf(pchBuf, k_cBufLen, "[M:%u:%u:%u]", m_steamid.m_comp.m_EUniverse, m_steamid.m_comp.m_unAccountID, m_steamid.m_comp.m_unAccountInstance);
+	}
+	else if (k_EAccountTypePending == m_steamid.m_comp.m_EAccountType)
+	{
+		snprintf(pchBuf, k_cBufLen, "[P:%u:%u]", m_steamid.m_comp.m_EUniverse, m_steamid.m_comp.m_unAccountID);
+	}
+	else if (k_EAccountTypeContentServer == m_steamid.m_comp.m_EAccountType)
+	{
+		snprintf(pchBuf, k_cBufLen, "[C:%u:%u]", m_steamid.m_comp.m_EUniverse, m_steamid.m_comp.m_unAccountID);
+	}
+	else if (k_EAccountTypeClan == m_steamid.m_comp.m_EAccountType)
+	{
+		// 'g' for "group"
+		snprintf(pchBuf, k_cBufLen, "[g:%u:%u]", m_steamid.m_comp.m_EUniverse, m_steamid.m_comp.m_unAccountID);
+	}
+	else if (k_EAccountTypeChat == m_steamid.m_comp.m_EAccountType)
+	{
+		if (m_steamid.m_comp.m_unAccountInstance & k_EChatInstanceFlagClan)
+		{
+			snprintf(pchBuf, k_cBufLen, "[c:%u:%u]", m_steamid.m_comp.m_EUniverse, m_steamid.m_comp.m_unAccountID);
+		}
+		else if (m_steamid.m_comp.m_unAccountInstance & k_EChatInstanceFlagLobby)
+		{
+			snprintf(pchBuf, k_cBufLen, "[L:%u:%u]", m_steamid.m_comp.m_EUniverse, m_steamid.m_comp.m_unAccountID);
+		}
+		else // Anon chat
+		{
+			snprintf(pchBuf, k_cBufLen, "[T:%u:%u]", m_steamid.m_comp.m_EUniverse, m_steamid.m_comp.m_unAccountID);
+		}
+	}
+	else if (k_EAccountTypeInvalid == m_steamid.m_comp.m_EAccountType)
+	{
+		snprintf(pchBuf, k_cBufLen, "[I:%u:%u]", m_steamid.m_comp.m_EUniverse, m_steamid.m_comp.m_unAccountID);
+	}
+	else if (k_EAccountTypeIndividual == m_steamid.m_comp.m_EAccountType)
+	{
+		const unsigned int k_unSteamUserDesktopInstance = 1;
+		if (m_steamid.m_comp.m_unAccountInstance != k_unSteamUserDesktopInstance)
+			snprintf(pchBuf, k_cBufLen, "[U:%u:%u:%u]", m_steamid.m_comp.m_EUniverse, m_steamid.m_comp.m_unAccountID, m_steamid.m_comp.m_unAccountInstance);
+		else
+			snprintf(pchBuf, k_cBufLen, "[U:%u:%u]", m_steamid.m_comp.m_EUniverse, m_steamid.m_comp.m_unAccountID);
+	}
+	else if (k_EAccountTypeAnonUser == m_steamid.m_comp.m_EAccountType)
+	{
+		snprintf(pchBuf, k_cBufLen, "[a:%u:%u]", m_steamid.m_comp.m_EUniverse, m_steamid.m_comp.m_unAccountID);
+	}
+	else
+	{
+		snprintf(pchBuf, k_cBufLen, "[i:%u:%u]", m_steamid.m_comp.m_EUniverse, m_steamid.m_comp.m_unAccountID);
+	}
+	return pchBuf;
+}
+
 
 #endif // !__TINY_CSGO_SERVER_STEAMAUTH_HPP__
