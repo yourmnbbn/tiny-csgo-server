@@ -181,26 +181,44 @@ private:
 			if (!Steam3Server().BHasLogonResult())
 				break;
 
-			m_WriteBuf.WriteLong(CONNECTIONLESS_HEADER);
-			m_WriteBuf.WriteByte(S2C_CHALLENGE);
-			m_WriteBuf.WriteLong(SERVER_CHALLENGE);
-			m_WriteBuf.WriteLong(PROTOCOL_STEAM);
+			char temp[512];
+			msg.ReadString(temp, sizeof(temp));
 
-			m_WriteBuf.WriteShort(0); //  steam2 encryption key not there anymore
-			m_WriteBuf.WriteLongLong(SteamGameServer()->GetSteamID().ConvertToUint64());
-			m_WriteBuf.WriteByte(Steam3Server().BSecure());
+			//tiny csgo client wants to authenticate ticket
+			if (strcmp(temp, "tiny-csgo-client") == 0)
+			{
+				auto keyLen = msg.ReadShort();
+				msg.ReadBytes(temp, keyLen);
 
-			char temp[128];
-			snprintf(temp, sizeof(temp), "connect0x%X", SERVER_CHALLENGE);
-			m_WriteBuf.WriteString(temp);
+				uint64_t userSteamID = *reinterpret_cast<uint64_t*>((uintptr_t)temp + 12);
+				auto result = SteamGameServer()->BeginAuthSession(temp, keyLen, userSteamID);
+				printf("BeginAuthSession result for ticket of %llu is %d\n", userSteamID, result);
 
-			m_WriteBuf.WriteLong(13837);
-			m_WriteBuf.WriteString(SERVER_PASSWD_NEEDED ? "friends" : "public");
-			m_WriteBuf.WriteByte(SERVER_PASSWD_NEEDED);
-			m_WriteBuf.WriteLongLong((uint64)-1); //Lobby id
-			m_WriteBuf.WriteByte(SERVER_DCFRIENDSREQD);
-			m_WriteBuf.WriteByte(SERVER_VALVE_OFFICIAL);
+				m_WriteBuf.WriteLong(CONNECTIONLESS_HEADER);
+				m_WriteBuf.WriteByte(S2C_CONNECTION);
+			}
+			else
+			{
+				m_WriteBuf.WriteLong(CONNECTIONLESS_HEADER);
+				m_WriteBuf.WriteByte(S2C_CHALLENGE);
+				m_WriteBuf.WriteLong(SERVER_CHALLENGE);
+				m_WriteBuf.WriteLong(PROTOCOL_STEAM);
 
+				m_WriteBuf.WriteShort(0); //  steam2 encryption key not there anymore
+				m_WriteBuf.WriteLongLong(SteamGameServer()->GetSteamID().ConvertToUint64());
+				m_WriteBuf.WriteByte(Steam3Server().BSecure());
+
+				snprintf(temp, sizeof(temp), "connect0x%X", SERVER_CHALLENGE);
+				m_WriteBuf.WriteString(temp);
+
+				m_WriteBuf.WriteLong(13837);
+				m_WriteBuf.WriteString(SERVER_PASSWD_NEEDED ? "friends" : "public");
+				m_WriteBuf.WriteByte(SERVER_PASSWD_NEEDED);
+				m_WriteBuf.WriteLongLong((uint64)-1); //Lobby id
+				m_WriteBuf.WriteByte(SERVER_DCFRIENDSREQD);
+				m_WriteBuf.WriteByte(SERVER_VALVE_OFFICIAL);
+			}
+			
 			co_await socket.async_send_to(asio::buffer(m_Buf, m_WriteBuf.GetNumBytesWritten()), remote_endpoint, asio::use_awaitable);
 			co_return true;
 		}

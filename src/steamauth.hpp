@@ -84,7 +84,48 @@ inline CSteam3Server& Steam3Server()
 
 inline void CSteam3Server::OnValidateAuthTicketResponse(ValidateAuthTicketResponse_t* pValidateAuthTicketResponse)
 {
-	printf("OnValidateAuthTicketResponse\n");
+	printf("GC response the result of validation of the ticket [SteamID: %llu]\n", pValidateAuthTicketResponse->m_SteamID.ConvertToUint64());
+
+	const char* reason = nullptr;
+
+	switch (pValidateAuthTicketResponse->m_eAuthSessionResponse)
+	{
+	case k_EAuthSessionResponseOK:						// Steam has verified the user is online, the ticket is valid and ticket has not been reused.
+		reason = "Success";
+		break;
+	case k_EAuthSessionResponseUserNotConnectedToSteam:		// The user in question is not connected to steam
+		reason = "The user in question is not connected to steam";
+		break;
+	case k_EAuthSessionResponseNoLicenseOrExpired:			// The license has expired.
+		reason = "The license has expired.";
+		break;
+	case k_EAuthSessionResponseVACBanned:					// The user is VAC banned for this game.
+		reason = "The user is VAC banned for this game.";
+		break;
+	case k_EAuthSessionResponseLoggedInElseWhere:			// The user account has logged in elsewhere and the session containing the game instance has been disconnected.
+		reason = "The user account has logged in elsewhere and the session containing the game instance has been disconnected.";
+		break;
+	case k_EAuthSessionResponseVACCheckTimedOut:				// VAC has been unable to perform anti-cheat checks on this user
+		reason = "VAC has been unable to perform anti-cheat checks on this user";
+		break;
+	case k_EAuthSessionResponseAuthTicketCanceled:			// The ticket has been canceled by the issuer
+		reason = "The ticket has been canceled by the issuer";
+		break;
+	case k_EAuthSessionResponseAuthTicketInvalidAlreadyUsed:	// This ticket has already been used, it is not valid.
+		reason = "This ticket has already been used, it is not valid.";
+		break;
+	case k_EAuthSessionResponseAuthTicketInvalid:			// This ticket is not from a user instance currently connected to steam.
+		reason = "This ticket is not from a user instance currently connected to steam.";
+		break;
+	case k_EAuthSessionResponsePublisherIssuedBan:			// The user is banned for this game. The ban came via the web api and not VAC
+		reason = "The user is banned for this game. The ban came via the web api and not VAC";
+		break;
+	default:
+		reason = "Unknown response";
+		break;
+	}
+
+	printf("Auth response: %d(%s)\n", pValidateAuthTicketResponse->m_eAuthSessionResponse, reason);
 }
 
 inline void CSteam3Server::OnGSPolicyResponse(GSPolicyResponse_t* pPolicyResponse)
