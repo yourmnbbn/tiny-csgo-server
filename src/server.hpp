@@ -29,6 +29,7 @@ public:
 		m_ArgParser(parser)
 
 	{
+		m_VersionInt = GetIntVersionFromString(parser.GetOptionValueString("-version"));
 	}
 
 public:
@@ -211,7 +212,7 @@ private:
 				snprintf(temp, sizeof(temp), "connect0x%X", SERVER_CHALLENGE);
 				m_WriteBuf.WriteString(temp);
 
-				m_WriteBuf.WriteLong(13837);
+				m_WriteBuf.WriteLong(m_VersionInt);
 				m_WriteBuf.WriteString(SERVER_PASSWD_NEEDED ? "friends" : "public");
 				m_WriteBuf.WriteByte(SERVER_PASSWD_NEEDED);
 				m_WriteBuf.WriteLongLong((uint64)-1); //Lobby id
@@ -273,6 +274,29 @@ private:
 	inline void		ResetWriteBuffer() { m_WriteBuf.Reset(); }
 	inline void		ResetReadBuffer() { m_ReadBuf.Seek(0); }
 
+	inline uint32_t GetIntVersionFromString(const char* version)
+	{
+		char temp[64];
+		int source_idx = 0;
+		int dest_idx = 0;
+
+		for (; ; ++source_idx)
+		{
+			if (version[source_idx] == '.')
+				continue;
+
+			temp[dest_idx++] = version[source_idx];
+
+			if (version[source_idx + 1] == 0)
+			{
+				temp[dest_idx] = 0;
+				break;
+			}
+		}
+
+		return atoi(temp);
+	}
+
 private:
 	char		m_Buf[10240];
 	bf_write	m_WriteBuf;
@@ -281,6 +305,8 @@ private:
 	ArgParser&	m_ArgParser;
 
 	uint32_t	m_LastReceivedPacketLength;
+
+	uint32_t	m_VersionInt = 0;
 };
 
 #endif // !__TINY_CSGO_SERVER_HPP__
