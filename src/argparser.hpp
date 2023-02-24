@@ -23,6 +23,7 @@ enum class OptionAttr : uint8_t
 
 enum class OptionValueType : uint8_t
 {
+	NONE,
 	INT8,
 	INT8U,
 	INT16,

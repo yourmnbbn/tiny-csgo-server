@@ -37,7 +37,7 @@ public:
 	{
 		//Connect to steam game server
 		Steam3Server().InitServer(m_ArgParser.GetOptionValueInt16U("-port"),
-			m_ArgParser.GetOptionValueString("-version"));
+			m_ArgParser.GetOptionValueString("-version"), m_ArgParser.HasOption("-vac"));
 		Steam3Server().SetAccount(m_ArgParser.GetOptionValueString("-gslt"));
 		Steam3Server().LogOn();
 
@@ -46,9 +46,11 @@ public:
 			//Connect to GC
 			g_GCClient.Init();
 			g_GCClient.SendHello();
+			g_GCClient.SwitchToAsync();
 
 			asio::co_spawn(g_IoContext, PrepareListenServer(), asio::detached);
 			asio::co_spawn(g_IoContext, RunFrame(), asio::detached);
+			asio::co_spawn(g_IoContext, PrintAuthedCount(), asio::detached);
 		}
 	}
 
@@ -59,6 +61,17 @@ private:
 	{
 		udp::socket socket(g_IoContext, udp::endpoint(udp::v4(), m_ArgParser.GetOptionValueInt16U("-port")));
 		co_await HandleIncommingPacket(socket);
+	}
+
+	asio::awaitable<void> PrintAuthedCount()
+	{
+		while (true)
+		{
+			asio::steady_timer timer(g_IoContext, 60s);
+			co_await timer.async_wait(asio::use_awaitable);
+
+			printf("Total authenticated players: %d\n", GetAuthHolder().GetAuthedPlayersCount());
+		}
 	}
 
 	//Simulate server frame
@@ -194,9 +207,9 @@ private:
 				uint64_t userSteamID = *reinterpret_cast<uint64_t*>((uintptr_t)temp + 12);
 				auto result = SteamGameServer()->BeginAuthSession(temp, keyLen, userSteamID);
 				printf("BeginAuthSession result for ticket of %llu is %d\n", userSteamID, result);
-
+				
 				m_WriteBuf.WriteLong(CONNECTIONLESS_HEADER);
-				m_WriteBuf.WriteByte(S2C_CONNECTION);
+				m_WriteBuf.WriteByte(result == k_EBeginAuthSessionResultOK ? S2C_CONNECTION : S2C_CONNREJECT);
 			}
 			else
 			{
@@ -261,6 +274,7 @@ private:
 		SteamGameServer()->SetMaxPlayerCount(SERVER_MAX_CLIENTS);
 		SteamGameServer()->SetBotPlayerCount(SERVER_NUM_FAKE_CLIENTS);
 		SteamGameServer()->SetSpectatorPort(0);
+		SteamGameServer()->SetRegion(SERVER_REGION);
 	}
 
 	void UpdateGCInformation()

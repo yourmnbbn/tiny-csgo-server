@@ -37,14 +37,21 @@ public:
 	void		SendHello();
 	uint64_t	GetServerReservationId() { return m_ReservationCookie; }
 	bool		SendMessageToGC(uint32_t type, google::protobuf::Message& msg);
+	void		SwitchToAsync() 
+	{ 
+		m_AsyncReceive = true;
+		StartAsyncReceiving();
+	}
 
 private:
 	void ProcessWelcomeMessage(char* pData, size_t length);
 	void OnGCMessageAvailable(uint32_t msgSize);
+	void StartAsyncReceiving();
 
 private:
 	ISteamGameCoordinator*	m_pGameCoordinator = nullptr;
 	bool					m_AsyncReceive = false;
+	bool					m_AsyncRecvRunning = false;
 	uint64_t				m_ReservationCookie = 0;
 };
 
@@ -181,6 +188,33 @@ inline void GCClient::OnGCMessageAvailable(uint32_t msgSize)
 		m_ReservationCookie = welcome.cstrike15_welcome().gscookieid();
 		printf("GC Connection established for server, reservation id 0x%llX\n", m_ReservationCookie);
 	}
+
+	if (msgType == k_EMsgGCServerConnectionStatus)
+	{
+		SendHello();
+	}
+}
+
+inline void GCClient::StartAsyncReceiving()
+{
+	if (m_AsyncRecvRunning)
+		return;
+
+	std::thread(
+		[this]() {
+			while (true)
+			{
+				uint32_t size;
+				while (m_pGameCoordinator->IsMessageAvailable(&size))
+				{
+					OnGCMessageAvailable(size);
+				}
+				std::this_thread::sleep_for(200ms);
+			}
+		}
+	).detach();
+
+	m_AsyncRecvRunning = true;
 }
 
 #endif // !__TINY_CSGO_CLIENT_GCCLIENT_HPP__

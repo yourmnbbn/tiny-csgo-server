@@ -9,10 +9,63 @@
 #include <thread>
 
 #include <chrono>
+#include <vector>
 #include <steam_api.h>
 #include <steam_gameserver.h>
+#include "common/info_const.hpp"
 
 using namespace std::chrono_literals;
+
+struct SteamAuthInfo
+{
+	uint64_t	m_SteamID;
+	uint8_t		m_AuthCode;
+};
+
+class AuthHolder
+{
+public:
+	void SetAuth(uint64_t steamid, uint8_t code)
+	{
+		bool found = false;
+
+		for (auto& auth : m_AuthList)
+		{
+			if (auth.m_SteamID == steamid)
+			{
+				found = true;
+				auth.m_AuthCode = code;
+			}
+		}
+
+		if (found)
+			return;
+
+		m_AuthList.emplace_back(SteamAuthInfo{ steamid, code });
+	}
+
+	uint32_t GetAuthedPlayersCount()
+	{
+		uint32_t count = 0;
+		for (auto& auth : m_AuthList)
+		{
+			if (auth.m_AuthCode == k_EBeginAuthSessionResultOK)
+				++count;
+		}
+
+		return count;
+	}
+
+private:
+	std::vector<SteamAuthInfo>	m_AuthList;
+};
+
+inline static AuthHolder g_AuthHolder;
+
+AuthHolder& GetAuthHolder()
+{
+	return g_AuthHolder;
+}
 
 class CSteam3Server : public CSteamGameServerAPIContext
 {
@@ -55,7 +108,7 @@ public:
 	/// What account name was selected?
 	const char*			GetAccountToken() const { return m_sAccountToken.c_str(); }
 
-	void				InitServer(uint16_t port, const char* version);
+	void				InitServer(uint16_t port, const char* version, bool enablevac);
 	void				LogOn();
 
 private:
@@ -85,7 +138,7 @@ inline CSteam3Server& Steam3Server()
 inline void CSteam3Server::OnValidateAuthTicketResponse(ValidateAuthTicketResponse_t* pValidateAuthTicketResponse)
 {
 	printf("GC response the result of validation of the ticket [SteamID: %llu]\n", pValidateAuthTicketResponse->m_SteamID.ConvertToUint64());
-
+	GetAuthHolder().SetAuth(pValidateAuthTicketResponse->m_SteamID.ConvertToUint64(), pValidateAuthTicketResponse->m_eAuthSessionResponse);
 	const char* reason = nullptr;
 
 	switch (pValidateAuthTicketResponse->m_eAuthSessionResponse)
@@ -264,9 +317,12 @@ inline void CSteam3Server::OnLoggedOff(SteamServersDisconnected_t* pLoggedOff)
 	}
 }
 
-inline void CSteam3Server::InitServer(uint16_t port, const char* version)
+inline void CSteam3Server::InitServer(uint16_t port, const char* version, bool enablevac)
 {
-	m_eServerMode = eServerModeAuthenticationAndSecure;
+	if(enablevac)
+		m_eServerMode = eServerModeAuthenticationAndSecure;
+	else
+		m_eServerMode = eServerModeAuthentication;
 
 	if (!SteamGameServer_Init(0, port, STEAMGAMESERVER_QUERY_PORT_SHARED, m_eServerMode, version))
 		printf("[SteamGameServer] Unable to initialize Steam Game Server.\n");
