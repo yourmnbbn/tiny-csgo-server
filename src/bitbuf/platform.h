@@ -686,36 +686,7 @@ typedef void * HINSTANCE;
 // Maximum and minimum representable values
 #ifndef PLATFORM_OSX
 
-#if _MSC_VER >= 1800 // VS 2013 or higher
-	// Copied from stdint.h
-	#define INT8_MIN         (-127i8 - 1)
-	#define INT16_MIN        (-32767i16 - 1)
-	#define INT32_MIN        (-2147483647i32 - 1)
-	#define INT64_MIN        (-9223372036854775807i64 - 1)
-	#define INT8_MAX         127i8
-	#define INT16_MAX        32767i16
-	#define INT32_MAX        2147483647i32
-	#define INT64_MAX        9223372036854775807i64
-	#define UINT8_MAX        0xffui8
-	#define UINT16_MAX       0xffffui16
-	#define UINT32_MAX       0xffffffffui32
-	#define UINT64_MAX       0xffffffffffffffffui64
-#else // _MSC_VER
-	#define  INT8_MAX			SCHAR_MAX
-	#define  INT16_MAX			SHRT_MAX
-	#define  INT32_MAX			LONG_MAX
-	#define  INT64_MAX			((int64)0x7fffffffffffffffll)
-
-	#define  INT8_MIN			SCHAR_MIN
-	#define  INT16_MIN			SHRT_MIN
-	#define  INT32_MIN			LONG_MIN
-	#define  INT64_MIN			(((int64)1) << 63)
-
-	#define  UINT8_MAX			((uint8)~0)
-	#define  UINT16_MAX			((uint16)~0)
-	#define  UINT32_MAX			((uint32)~0)
-	#define  UINT64_MAX			((uint64)~0)
-#endif
+#include <stdint.h>
 
 #define  UINT8_MIN			0
 #define  UINT16_MIN			0
