@@ -12,13 +12,12 @@
 #include "GCClient.hpp"
 #include "bitbuf/bitbuf.h"
 #include "common/proto_oob.h"
-#include "common/info_const.hpp"
+#include "serverinfo.hpp"
 
 using namespace asio::ip;
 using namespace std::chrono_literals;
 
 inline asio::io_context g_IoContext;
-inline constexpr auto CONNECTIONLESS_HEADER = -1;
 
 class Server
 {
@@ -60,7 +59,30 @@ private:
 	asio::awaitable<void> PrepareListenServer()
 	{
 		udp::socket socket(g_IoContext, udp::endpoint(udp::v4(), m_ArgParser.GetOptionValueInt16U("-port")));
+		
+		if (m_ArgParser.HasOption("-mirror") && ResolveRedirectSocket(m_ArgParser.GetOptionValueString("-rdip")))
+		{
+			m_RedirectEdp = udp::endpoint(make_address_v4(m_RedirectIP), m_RedirectPort);
+			asio::co_spawn(g_IoContext, ProcessA2sRequest(socket), asio::detached);
+		}
+
 		co_await HandleIncommingPacket(socket);
+	}
+
+	asio::awaitable<void>	ProcessA2sRequest(udp::socket& socket)
+	{
+		while (true)
+		{
+			//Request challenge here, and send A2S_INFO and A2S_PLAYER request when challenge is received
+			m_WriteBuf.Reset();
+			m_WriteBuf.WriteLong(CONNECTIONLESS_HEADER);
+			m_WriteBuf.WriteByte(A2S_INFO);
+			m_WriteBuf.WriteString(A2S_INFO_REQUEST_BODY);
+			co_await socket.async_send_to(asio::buffer(m_Buf, m_WriteBuf.GetNumBytesWritten()), m_RedirectEdp, asio::use_awaitable);
+
+			asio::steady_timer timer(g_IoContext, 10s);
+			co_await timer.async_wait(asio::use_awaitable);
+		}
 	}
 
 	asio::awaitable<void> PrintAuthedCount()
@@ -91,6 +113,94 @@ private:
 		}
 	}
 
+	asio::awaitable<void> HandleA2sMessage(udp::socket& socket)
+	{
+		if (m_ReadBuf.ReadLong() != CONNECTIONLESS_HEADER)
+			co_return;
+
+		switch (m_ReadBuf.ReadByte())
+		{
+		case S2C_CHALLENGE:
+		{
+			auto challenge = m_ReadBuf.ReadLong();
+			ResetWriteBuffer();
+
+			//A2S_INFO
+			m_WriteBuf.WriteLong(CONNECTIONLESS_HEADER);
+			m_WriteBuf.WriteByte(A2S_INFO);
+			m_WriteBuf.WriteString(A2S_INFO_REQUEST_BODY);
+			m_WriteBuf.WriteLong(challenge);
+			co_await socket.async_send_to(asio::buffer(m_Buf, m_WriteBuf.GetNumBytesWritten()), m_RedirectEdp, asio::use_awaitable);
+
+			//A2S_PLAYER
+			ResetWriteBuffer();
+			m_WriteBuf.WriteLong(CONNECTIONLESS_HEADER);
+			m_WriteBuf.WriteByte(A2S_PLAYER);
+			m_WriteBuf.WriteLong(challenge);
+			co_await socket.async_send_to(asio::buffer(m_Buf, m_WriteBuf.GetNumBytesWritten()), m_RedirectEdp, asio::use_awaitable);
+			break;
+		}
+		case S2A_INFO_SRC:
+		{
+			char temp[1024];
+			auto& info = GetServerInfoHolder();
+
+			info.ServerProtocol() = m_ReadBuf.ReadByte();
+
+			m_ReadBuf.ReadString(temp, sizeof(temp));
+			info.ServerName() = temp;
+			m_ReadBuf.ReadString(temp, sizeof(temp));
+			info.ServerMap() = temp;
+			m_ReadBuf.ReadString(temp, sizeof(temp));
+			info.ServerGameFolder() = temp;
+
+			//skip the game name and appid, number of players
+			m_ReadBuf.ReadString(temp, sizeof(temp));
+			m_ReadBuf.ReadShort();
+			m_ReadBuf.ReadByte();
+
+			info.ServerMaxClients() = m_ReadBuf.ReadByte();
+			info.ServerNumFakeClient() = m_ReadBuf.ReadByte();
+			info.ServerType() = m_ReadBuf.ReadByte();
+			info.ServerOS() = m_ReadBuf.ReadByte();
+			info.ServerPasswordNeeded() = m_ReadBuf.ReadByte();
+			info.ServerVacStatus() = m_ReadBuf.ReadByte();
+
+			//version string
+			m_ReadBuf.ReadString(temp, sizeof(temp));
+
+			//EDF, we discard all but the game tag
+			auto edf = m_ReadBuf.ReadByte();
+			if(edf & S2A_EXTRA_DATA_HAS_GAME_PORT)
+				m_ReadBuf.ReadShort();
+
+			if (edf & S2A_EXTRA_DATA_HAS_STEAMID)
+				m_ReadBuf.ReadLongLong();
+
+			if (edf & S2A_EXTRA_DATA_HAS_SPECTATOR_DATA)
+			{
+				m_ReadBuf.ReadShort();
+				m_ReadBuf.ReadString(temp, sizeof(temp));
+			}
+
+			if (edf & S2A_EXTRA_DATA_HAS_GAMETAG_DATA)
+			{
+				m_ReadBuf.ReadString(temp, sizeof(temp));
+				info.ServerTag() = temp;
+			}
+
+			break;
+		}
+		case S2A_PLAYER:
+		{
+			GetServerInfoHolder().SaveA2sPlayerResponse((char*)(m_Buf + m_ReadBuf.GetNumBytesRead()), m_LastReceivedPacketLength - m_ReadBuf.GetNumBytesRead());
+			break;
+		}
+		default:
+			break;
+		}
+	}
+
 	asio::awaitable<void> HandleIncommingPacket(udp::socket& socket)
 	{
 		while (true)
@@ -100,7 +210,14 @@ private:
 
 			udp::endpoint edp;
 			co_await socket.async_wait(socket.wait_read, asio::use_awaitable);
-			size_t m_LastReceivedPacketLength = co_await socket.async_receive_from(asio::buffer(m_Buf), edp, asio::use_awaitable);
+			m_LastReceivedPacketLength = co_await socket.async_receive_from(asio::buffer(m_Buf), edp, asio::use_awaitable);
+
+			//This is the packet from our redirect server
+			if (edp == m_RedirectEdp)
+			{
+				co_await HandleA2sMessage(socket);
+				continue;
+			}
 
 			printf("Receive messages from %s:%d, size %d\n", edp.address().to_string().c_str(), edp.port(), m_LastReceivedPacketLength);
 
@@ -146,21 +263,23 @@ private:
 			m_WriteBuf.WriteLong(CONNECTIONLESS_HEADER);
 			m_WriteBuf.WriteByte(S2A_INFO_SRC);
 
-			m_WriteBuf.WriteByte(17); //protocol version
-			m_WriteBuf.WriteString(SERVER_NAME);
-			m_WriteBuf.WriteString(SERVER_MAP);
-			m_WriteBuf.WriteString(SERVER_GAME_FOLDER);
-			m_WriteBuf.WriteString(SERVER_DESCRIPTION);
+			auto& info = GetServerInfoHolder();
 
-			m_WriteBuf.WriteShort(SERVER_APPID);
-			m_WriteBuf.WriteByte(SERVER_NUM_CLIENTS);
-			m_WriteBuf.WriteByte(SERVER_MAX_CLIENTS);
-			m_WriteBuf.WriteByte(SERVER_NUM_FAKE_CLIENTS);
-			m_WriteBuf.WriteByte(SERVER_TYPE);
-			m_WriteBuf.WriteByte(SERVER_OS);
+			m_WriteBuf.WriteByte(info.ServerProtocol());
+			m_WriteBuf.WriteString(info.ServerName().c_str());
+			m_WriteBuf.WriteString(info.ServerMap().c_str());
+			m_WriteBuf.WriteString(info.ServerGameFolder().c_str());
+			m_WriteBuf.WriteString(info.ServerDescription().c_str());
 
-			m_WriteBuf.WriteByte(SERVER_PASSWD_NEEDED);
-			m_WriteBuf.WriteByte(SERVER_VAC_STATES);
+			m_WriteBuf.WriteShort(info.ServerAppID());
+			m_WriteBuf.WriteByte(info.ServerNumClients());
+			m_WriteBuf.WriteByte(info.ServerMaxClients());
+			m_WriteBuf.WriteByte(info.ServerNumFakeClient());
+			m_WriteBuf.WriteByte(info.ServerType());
+			m_WriteBuf.WriteByte(info.ServerOS());
+
+			m_WriteBuf.WriteByte(info.ServerPasswordNeeded());
+			m_WriteBuf.WriteByte(info.ServerVacStatus());
 			m_WriteBuf.WriteString(m_ArgParser.GetOptionValueString("-version"));
 
 			//EDF
@@ -168,8 +287,8 @@ private:
 
 			m_WriteBuf.WriteShort(m_ArgParser.GetOptionValueInt16U("-port"));
 			m_WriteBuf.WriteLongLong(SteamGameServer()->GetSteamID().ConvertToUint64());
-			m_WriteBuf.WriteString(SERVER_TAG);
-			m_WriteBuf.WriteLongLong(SERVER_APPID);
+			m_WriteBuf.WriteString(info.ServerTag().c_str());
+			m_WriteBuf.WriteLongLong(info.ServerAppID());
 
 			co_await socket.async_send_to(asio::buffer(m_Buf, m_WriteBuf.GetNumBytesWritten()), remote_endpoint, asio::use_awaitable);
 			co_return true;
@@ -181,11 +300,20 @@ private:
 
 			m_WriteBuf.WriteLong(CONNECTIONLESS_HEADER);
 			m_WriteBuf.WriteByte(S2A_PLAYER);
-			m_WriteBuf.WriteByte(1);
-			m_WriteBuf.WriteByte(0);
-			m_WriteBuf.WriteString("Max Players");
-			m_WriteBuf.WriteLong(SERVER_MAX_CLIENTS);
-			m_WriteBuf.WriteFloat(3600.0);
+
+			if (GetServerInfoHolder().GetA2sPlayerResponseLength() < 1)
+			{
+				m_WriteBuf.WriteByte(1);
+				m_WriteBuf.WriteByte(0);
+				m_WriteBuf.WriteString("Max Players");
+				m_WriteBuf.WriteLong(GetServerInfoHolder().ServerMaxClients());
+				m_WriteBuf.WriteFloat(3600.0);
+			}
+			else
+			{
+				auto& info = GetServerInfoHolder();
+				m_WriteBuf.WriteBytes(info.GetA2sPlayerResponse(), info.GetA2sPlayerResponseLength());
+			}
 			
 			co_await socket.async_send_to(asio::buffer(m_Buf, m_WriteBuf.GetNumBytesWritten()), remote_endpoint, asio::use_awaitable);
 			co_return true;
@@ -226,11 +354,11 @@ private:
 				m_WriteBuf.WriteString(temp);
 
 				m_WriteBuf.WriteLong(m_VersionInt);
-				m_WriteBuf.WriteString(SERVER_PASSWD_NEEDED ? "friends" : "public");
-				m_WriteBuf.WriteByte(SERVER_PASSWD_NEEDED);
+				m_WriteBuf.WriteString(GetServerInfoHolder().ServerPasswordNeeded() ? "friends" : "public");
+				m_WriteBuf.WriteByte(GetServerInfoHolder().ServerPasswordNeeded());
 				m_WriteBuf.WriteLongLong((uint64)-1); //Lobby id
 				m_WriteBuf.WriteByte(SERVER_DCFRIENDSREQD);
-				m_WriteBuf.WriteByte(SERVER_VALVE_OFFICIAL);
+				m_WriteBuf.WriteByte(GetServerInfoHolder().ServerIsOfficial());
 			}
 			
 			co_await socket.async_send_to(asio::buffer(m_Buf, m_WriteBuf.GetNumBytesWritten()), remote_endpoint, asio::use_awaitable);
@@ -264,15 +392,16 @@ private:
 private:
 	void SendUpdatedServerDetails()
 	{
+		auto& info = GetServerInfoHolder();
 		SteamGameServer()->SetProduct("valve");
-		SteamGameServer()->SetModDir(SERVER_GAME_FOLDER);
-		SteamGameServer()->SetServerName(SERVER_NAME);
-		SteamGameServer()->SetGameDescription(SERVER_DESCRIPTION);
-		SteamGameServer()->SetGameTags(SERVER_TAG);
-		SteamGameServer()->SetMapName(SERVER_MAP);
-		SteamGameServer()->SetPasswordProtected(SERVER_PASSWD_NEEDED);
-		SteamGameServer()->SetMaxPlayerCount(SERVER_MAX_CLIENTS);
-		SteamGameServer()->SetBotPlayerCount(SERVER_NUM_FAKE_CLIENTS);
+		SteamGameServer()->SetModDir(info.ServerGameFolder().c_str());
+		SteamGameServer()->SetServerName(info.ServerName().c_str());
+		SteamGameServer()->SetGameDescription(info.ServerDescription().c_str());
+		SteamGameServer()->SetGameTags(info.ServerTag().c_str());
+		SteamGameServer()->SetMapName(info.ServerMap().c_str());
+		SteamGameServer()->SetPasswordProtected(info.ServerPasswordNeeded());
+		SteamGameServer()->SetMaxPlayerCount(info.ServerMaxClients());
+		SteamGameServer()->SetBotPlayerCount(info.ServerNumFakeClient());
 		SteamGameServer()->SetSpectatorPort(0);
 		SteamGameServer()->SetRegion(SERVER_REGION);
 	}
@@ -280,7 +409,7 @@ private:
 	void UpdateGCInformation()
 	{
 		CMsgGCCStrike15_v2_MatchmakingServerReservationResponse info;
-		info.set_map(SERVER_MAP);
+		info.set_map(GetServerInfoHolder().ServerMap());
 
 		g_GCClient.SendMessageToGC(k_EMsgGCCStrike15_v2_MatchmakingServerReservationResponse, info);
 	}
@@ -311,6 +440,33 @@ private:
 		return atoi(temp);
 	}
 
+	inline bool ResolveRedirectSocket(const char* socketString)
+	{
+		auto len = strlen(socketString) + 1;
+		std::unique_ptr<char[]> memBlock = std::make_unique<char[]>(len);
+		auto* pData = memBlock.get();
+		memcpy(pData, socketString, len);
+
+		uint32_t index = 0;
+		for (index = 0; index < len - 1; ++index)
+		{
+			if (pData[index] == ':')
+				break;
+		}
+
+		if (index == len)
+		{
+			printf("Can't resolve CM Server address: %s\n", socketString);
+			return false;
+		}
+
+		m_RedirectPort = static_cast<uint16_t>(atoi(pData + index + 1));
+		pData[index] = 0;
+		m_RedirectIP = pData;
+
+		return true;
+	}
+
 private:
 	char		m_Buf[10240];
 	bf_write	m_WriteBuf;
@@ -319,8 +475,12 @@ private:
 	ArgParser&	m_ArgParser;
 
 	uint32_t	m_LastReceivedPacketLength;
-
 	uint32_t	m_VersionInt = 0;
+
+	std::string m_RedirectIP;
+	uint16_t	m_RedirectPort;
+
+	udp::endpoint m_RedirectEdp;
 };
 
 #endif // !__TINY_CSGO_SERVER_HPP__

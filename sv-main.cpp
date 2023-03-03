@@ -11,6 +11,8 @@ int main(int argc, char** argv)
 	parser.AddOption("-gslt", "Game server logon token", OptionAttr::OptionalWithValue, OptionValueType::STRING);
 	parser.AddOption("-rdip", "Redirect IP address (e.g. 127.0.0.1:27015)", OptionAttr::OptionalWithValue, OptionValueType::STRING);
 	parser.AddOption("-vac", "Enable VAC?", OptionAttr::OptionalWithoutValue, OptionValueType::NONE);
+	parser.AddOption("-mirror", "Enable mirroring server info from redrecting server?", OptionAttr::OptionalWithoutValue, OptionValueType::NONE);
+
 
 	try
 	{
@@ -19,6 +21,12 @@ int main(int argc, char** argv)
 	catch (const std::exception& e)
 	{
 		printf("%s\n", e.what());
+		return -1;
+	}
+
+	if (parser.HasOption("-mirror") && !parser.HasOption("-rdip"))
+	{
+		printf("When -mirror is enabled, you have to provide a redirect server socket by option -rdip\n");
 		return -1;
 	}
 

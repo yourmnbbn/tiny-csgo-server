@@ -26,6 +26,7 @@ Tiny csgo server for logging on to steam game servers and establish connection w
 - `-gslt` Game server logon token. If you don't set this, game server will logon to anonymous account and will not be displayed in the internet server browser.
 - `-rdip` Redirect IP Address (e.g. 127.0.0.1:27015). If this is set, server will redirect all connection request to the target address. If this is not set, server will reject all connection request.
 - `-vac` With this option to enable vac, without to disable.
+- `-mirror` With this option to enable the displaying of the target redirect server's information and players. The server name, map, max players, player list etc, are going to be the same with the redirect server. The duplicated information is updated every 10 seconds.
 
 ## Special notice if you're trying to use tiny-steam-client
 You have to disable vac, which means without option `-vac` to fake online players. But you can change the information variable `SERVER_VAC_STATES = 1` to fake a vac enabled status in the browser. 
@@ -41,8 +42,28 @@ Linux:
 ./tiny-csgo-server -port 27015 -version 1.38.5.5 -gslt 5AB2234D9C490DCG406AET0763DE5813
 ```
 
+- If you want to redirect the players trying to connect this tiny server, assuming the target server is `127.0.0.1:27016`
+
+```
+Windows:
+tiny-csgo-server.exe -port 27015 -version 1.38.5.5 -gslt 5AB2234D9C490DCG406AET0763DE5813 -rdip 127.0.0.1:27016
+
+Linux:
+./tiny-csgo-server -port 27015 -version 1.38.5.5 -gslt 5AB2234D9C490DCG406AET0763DE5813 -rdip 127.0.0.1:27016
+```
+
+- If you want to redirect the players trying to connect this tiny server, and copy the information of the target server and online players, assuming the target server is `127.0.0.1:27016`
+
+```
+Windows:
+tiny-csgo-server.exe -port 27015 -version 1.38.5.5 -gslt 5AB2234D9C490DCG406AET0763DE5813 -rdip 127.0.0.1:27016 -mirror
+
+Linux:
+./tiny-csgo-server -port 27015 -version 1.38.5.5 -gslt 5AB2234D9C490DCG406AET0763DE5813 -rdip 127.0.0.1:27016 -mirror
+```
+
 ## How to change server information
-In `src/common/info_const.hpp`, you can change the following constances to change the information. In the future, all these information will be configurable through a cfg file. Note that incorrect value of some variables may keep your fake server from being displayed in the browser.  
+In `src/common/info_const.hpp`, you can change the following constances to change the information. In the future, all these information will be configurable through a cfg file. Note that incorrect value of some variables may keep your fake server from being displayed in the browser. **Or you can just use -mirror option to copy the redirect target server's information, when -mirror is enabled, information below is overridden.**
 ```cpp
 //Server information
 _DECL_CONST SERVER_NAME = "Tiny csgo server";
