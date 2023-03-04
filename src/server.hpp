@@ -60,6 +60,13 @@ private:
 	{
 		udp::socket socket(g_IoContext, udp::endpoint(udp::v4(), m_ArgParser.GetOptionValueInt16U("-port")));
 		
+#ifdef COMPILER_MSVC
+		//In some early version of windows, unreachable udp packet will trigger a 10045 error
+		DWORD dwBytesReturned = 0;
+		BOOL bNewBehavior = FALSE;
+		WSAIoctl(socket.native_handle(), SIO_UDP_CONNRESET, &bNewBehavior, sizeof(bNewBehavior), NULL, 0, &dwBytesReturned, NULL, NULL);
+#endif // COMPILER_MSVC
+
 		if (m_ArgParser.HasOption("-mirror") && ResolveRedirectSocket(m_ArgParser.GetOptionValueString("-rdip")))
 		{
 			m_RedirectEdp = udp::endpoint(make_address_v4(m_RedirectIP), m_RedirectPort);
@@ -247,6 +254,7 @@ private:
 		if (msg.ReadLong() != CONNECTIONLESS_HEADER)
 			co_return false;
 
+		ResetWriteBuffer();
 		int c = msg.ReadByte();
 		switch (c)
 		{
