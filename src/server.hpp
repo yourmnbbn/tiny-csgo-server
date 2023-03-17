@@ -349,24 +349,36 @@ private:
 			}
 			else
 			{
-				m_WriteBuf.WriteLong(CONNECTIONLESS_HEADER);
-				m_WriteBuf.WriteByte(S2C_CHALLENGE);
-				m_WriteBuf.WriteLong(SERVER_CHALLENGE);
-				m_WriteBuf.WriteLong(PROTOCOL_STEAM);
+				//We reject the client here so we won't get reject from lobby error.
+				if (m_ArgParser.HasOption("-rdip"))
+				{
+					m_WriteBuf.WriteLong(CONNECTIONLESS_HEADER);
+					m_WriteBuf.WriteByte(S2C_CONNREJECT);
+					m_WriteBuf.WriteString("ConnectRedirectAddress:");
+					m_WriteBuf.SeekToBit(m_WriteBuf.GetNumBitsWritten() - 8); //Get rid of '\0'
+					m_WriteBuf.WriteString(m_ArgParser.GetOptionValueString("-rdip"));
+				}
+				else
+				{
+					m_WriteBuf.WriteLong(CONNECTIONLESS_HEADER);
+					m_WriteBuf.WriteByte(S2C_CHALLENGE);
+					m_WriteBuf.WriteLong(SERVER_CHALLENGE);
+					m_WriteBuf.WriteLong(PROTOCOL_STEAM);
 
-				m_WriteBuf.WriteShort(0); //  steam2 encryption key not there anymore
-				m_WriteBuf.WriteLongLong(SteamGameServer()->GetSteamID().ConvertToUint64());
-				m_WriteBuf.WriteByte(Steam3Server().BSecure());
+					m_WriteBuf.WriteShort(0); //  steam2 encryption key not there anymore
+					m_WriteBuf.WriteLongLong(SteamGameServer()->GetSteamID().ConvertToUint64());
+					m_WriteBuf.WriteByte(SERVER_VAC_STATES);
 
-				snprintf(temp, sizeof(temp), "connect0x%X", SERVER_CHALLENGE);
-				m_WriteBuf.WriteString(temp);
+					snprintf(temp, sizeof(temp), "connect0x%X", SERVER_CHALLENGE);
+					m_WriteBuf.WriteString(temp);
 
-				m_WriteBuf.WriteLong(m_VersionInt);
-				m_WriteBuf.WriteString(GetServerInfoHolder().ServerPasswordNeeded() ? "friends" : "public");
-				m_WriteBuf.WriteByte(GetServerInfoHolder().ServerPasswordNeeded());
-				m_WriteBuf.WriteLongLong((uint64)-1); //Lobby id
-				m_WriteBuf.WriteByte(SERVER_DCFRIENDSREQD);
-				m_WriteBuf.WriteByte(GetServerInfoHolder().ServerIsOfficial());
+					m_WriteBuf.WriteLong(m_VersionInt);
+					m_WriteBuf.WriteString(GetServerInfoHolder().ServerPasswordNeeded() ? "friends" : "public");
+					m_WriteBuf.WriteByte(GetServerInfoHolder().ServerPasswordNeeded());
+					m_WriteBuf.WriteLongLong((uint64)-1); //Lobby id
+					m_WriteBuf.WriteByte(SERVER_DCFRIENDSREQD);
+					m_WriteBuf.WriteByte(GetServerInfoHolder().ServerIsOfficial());
+				}
 			}
 			
 			co_await socket.async_send_to(asio::buffer(m_Buf, m_WriteBuf.GetNumBytesWritten()), remote_endpoint, asio::use_awaitable);
