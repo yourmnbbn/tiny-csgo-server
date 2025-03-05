@@ -1,38 +1,32 @@
-﻿#include "argparser.hpp"
-#include "GCClient.hpp"
-#include "server.hpp"
 
-int main(int argc, char** argv)
-{
-	ArgParser parser;
+#include "src/server.hpp"
+#include <iostream>
+#include <string>
+#include <cstdlib>
 
-	parser.AddOption("-version", "CSGO Server version", OptionAttr::RequiredWithValue, OptionValueType::STRING);
-	parser.AddOption("-port", "Server listening port", OptionAttr::RequiredWithValue, OptionValueType::INT16U);
-	parser.AddOption("-gslt", "Game server logon token", OptionAttr::OptionalWithValue, OptionValueType::STRING);
-	parser.AddOption("-rdip", "Redirect IP address (e.g. 127.0.0.1:27015)", OptionAttr::OptionalWithValue, OptionValueType::STRING);
-	parser.AddOption("-vac", "Enable VAC?", OptionAttr::OptionalWithoutValue, OptionValueType::NONE);
-	parser.AddOption("-mirror", "Enable mirroring server info from redrecting server?", OptionAttr::OptionalWithoutValue, OptionValueType::NONE);
+int main(int argc, char* argv[]) {
+    try {
+        if (argc < 6 || std::string(argv[1]) != "-port" || std::string(argv[3]) != "-rdip" || std::string(argv[5]) != "-mirror") {
+            std::cerr << "Usage: ./tiny-csgo-server -port <port> -rdip <redirect_ip:port> -mirror\n";
+            return 1;
+        }
 
+        uint16_t port = static_cast<uint16_t>(std::stoi(argv[2]));
+        std::string redirect_ip_port = argv[4];
+        size_t colon_pos = redirect_ip_port.find(':');
+        if (colon_pos == std::string::npos) {
+            std::cerr << "Invalid redirect IP:PORT format\n";
+            return 1;
+        }
 
-	try
-	{
-		parser.ParseArgument(argc, argv);
-	}
-	catch (const std::exception& e)
-	{
-		printf("%s\n", e.what());
-		return -1;
-	}
+        std::string redirect_ip = redirect_ip_port.substr(0, colon_pos);
+        uint16_t redirect_port = static_cast<uint16_t>(std::stoi(redirect_ip_port.substr(colon_pos + 1)));
 
-	if (parser.HasOption("-mirror") && !parser.HasOption("-rdip"))
-	{
-		printf("When -mirror is enabled, you have to provide a redirect server socket by option -rdip\n");
-		return -1;
-	}
-
-	Server sv(parser);
-	sv.InitializeServer();
-	sv.RunServer();
-	return 0;
+        asio::io_context io_context;
+        GoldSourceServer server(io_context, port, redirect_ip, redirect_port);
+        io_context.run();
+    } catch (std::exception& e) {
+        std::cerr << "Exception: " << e.what() << "\n";
+    }
+    return 0;
 }
-
